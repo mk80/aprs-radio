@@ -3,6 +3,7 @@ from serial.serialutil import SerialException
 import serial.tools.list_ports
 import time
 import threading
+import binary_decode
 
 class SerialTTY:
 
@@ -45,10 +46,22 @@ class SerialTTY:
     def _read_data_loop(self):
         while self._running and self.ser and self.ser.is_open:
             try:
-                line = self.ser.readline().decode('utf-8', errors='ignore').strip()
-                if line:
-                    ## TODO : send this to another class to handle decoding KISS frame
-                    print(f"[DATA] {line}")
+                #line = self.ser.readline().decode('utf-8', errors='ignore').strip()
+                #if line:
+                #    ## TODO : send this to another class to handle decoding KISS frame
+                #    print(f"[DATA] {line}")
+
+                # decode binary
+                if self.ser.in_waiting > 0:
+                    data = self.ser.read(self.ser.in_waiting)
+                    if data:
+                        # Process the raw binary data (bytes object)
+                        print(f"[BYTE COUNT] {len(data)} :: [DATA] {data}")
+                        # decoding binary data
+                        kiss_type_byte, ax25_fame = binary_decode.kiss_destuff(data)
+
+                    
+                    
             except SerialException as e:
                 print(f"Serial read error : {e}")
                 self._running = False
