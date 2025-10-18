@@ -58,9 +58,14 @@ class SerialTTY:
                         # Process the raw binary data (bytes object)
                         print(f"[BYTE COUNT] {len(data)} :: [DATA] {data}")
                         # decoding binary data
-                        kiss_type_byte, ax25_fame = binary_decode.kiss_destuff(data)
+                        kiss_type_byte, ax25_frame = binary_decode.kiss_destuff(data)
+                        print(f"[KISS_TYPE_BYTE] {kiss_type_byte} :: [AX.25] {ax25_frame}")
+                        callsign = binary_decode.unshift_callsign(ax25_frame)
+                        print(f"[CALLSIGN] {callsign}")
 
-                    
+
+
+                time.sleep(0.001) 
                     
             except SerialException as e:
                 print(f"Serial read error : {e}")
