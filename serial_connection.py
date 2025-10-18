@@ -3,6 +3,7 @@ from serial.serialutil import SerialException
 import serial.tools.list_ports
 import time
 import threading
+import binary_decode
 
 class SerialTTY:
 
@@ -45,10 +46,26 @@ class SerialTTY:
     def _read_data_loop(self):
         while self._running and self.ser and self.ser.is_open:
             try:
-                line = self.ser.readline().decode('utf-8', errors='ignore').strip()
-                if line:
-                    ## TODO : send this to another class to handle decoding KISS frame
-                    print(f"[DATA] {line}")
+                #line = self.ser.readline().decode('utf-8', errors='ignore').strip()
+                #if line:
+                #    ## TODO : send this to another class to handle decoding KISS frame
+                #    print(f"[DATA] {line}")
+
+                # decode binary
+                if self.ser.in_waiting > 0:
+                    data = self.ser.read(self.ser.in_waiting)
+                    if data:
+                        # Process the raw binary data (bytes object)
+                        print(f"[BYTE COUNT] {len(data)} :: [DATA] {data}")
+                        # decoding binary data
+                        kiss_type_byte, ax25_frame = binary_decode.kiss_destuff(data)
+                        print(f"[KISS_TYPE_BYTE] {kiss_type_byte} :: [AX.25] {ax25_frame}")
+                        # decode the AX.25 frame
+                        #   returns dest_call, src_call, digi_path, hex(control_field), hex(pid_field), payload_decoded
+                        destination_callsign, source_callsign, digipeater_path, control_field_hex, pid_field_hex, payload = binary_decode.parse_ax25_frame(ax25_frame)
+                        print(f"{destination_callsign} :: {source_callsign} :: {digipeater_path} :: {control_field_hex} :: {pid_field_hex} :: {payload}")
+                time.sleep(0.01) 
+                    
             except SerialException as e:
                 print(f"Serial read error : {e}")
                 self._running = False

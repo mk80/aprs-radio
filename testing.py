@@ -1,7 +1,7 @@
 import serial_connection
 import time
 
-aprs_stream = serial_connection.SerialTTY()
+aprs_stream = serial_connection.SerialTTY(baudrate=115200)
 
 try:
     print(f"visible ports : {aprs_stream.available_ports}")
