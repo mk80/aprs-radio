@@ -65,27 +65,31 @@ def parse_ax25_frame(frame_data):
             'was_digipeated': was_digipeated
         })
     # 2. Extract addresses and digipeater path
-    dest_call
-#    """Decodes the main parts of the AX.25 frame."""
-#    # AX.25 is byte-oriented, so we can use slicing
-#    dest_addr_field = frame_data[0:7]
-#    src_addr_field = frame_data[7:14]
-#
-#    dest_call = unshift_callsign(dest_addr_field)
-#    src_call = unshift_callsign(src_addr_field)
-#
-#    # Simple example assumes no digipeaters, so Control field starts at byte 14
-#    control_field = frame_data[14]
-#    pid_field = frame_data[15]
-#
-#    # The rest is the payload/information field
-#    payload = frame_data[16:]
-#
-#    print(f"Destination : {dest_call} :: Source : {src_call} :: Control (Hex) : {hex(control_field)} :: PID (Hex) : {hex(pid_field)}")
-#
-#    # if PID is 0xF0 (no protocol), the payload is often ASCII text
-#    if pid_field == 0xF0:
-#        print(f"    Message : {payload.decode('ascii', errors='ignore')}")
-#    else:
-#        print(f"    Raw Payload : {payload.hed()}")
+    dest_call = parsed_addresses[0]['call']
+    src_call = parsed_addresses[1]['call']
+    # all addresses after the first two are digipeaters
+    digipeater_path = []
+    for addr_data in parsed_addresses[2:]:
+        # append the callsign and a marker if it has already been digipeated (H-bit)
+        marker = '*' if addr_data['was_digipeated'] else ''
+        digipeater_path.append(f"{addr_data['call']}{marker}")
+    # 3. Parse control, PID, and payload
+    #   the control field is the first byte AFTER the last address field
+    control_field = frame_data[current_byte_index]
+    current_byte_index += 1
+    # the PID field follows the control field
+    pid_field = frame_data[current_byte_index]
+    current_byte_index += 1
+    # the rest is the information/payload
+    payload = frame_data[current_byte_index:]
+    # digipeater path
+    digi_path = ', '.join(digipeater_path) if digipeater_path else 'None'
+    # 4. return (or output) results
+    #print(f"[DESTINATION] {dest_call}")
+    if pid_field == 0xF0:
+        # common for APRS and plain text
+        payload_decoded = payload.decode('ascii', errors='ignore')
+    else:
+        payload_decoded = payload.hex()
+    return dest_call, src_call, digi_path, hex(control_field), hex(pid_field), payload_decoded
 
