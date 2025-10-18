@@ -48,7 +48,24 @@ def parse_ax25_frame(frame_data):
     current_byte_index = 0
     parsed_addresses = []
 
-
+    # 1. Parse all Address Fields (Destination, Source, and Digipeaters)
+    #   The loop stops when the End of Address (Ea) bit is found (is_last_address == 1)
+    is_last_address = 0
+    while not is_last_address and current_byte_index < len(frame_data):
+        address_field = frame_data[current_byte_index : current_byte_index + 7]
+        current_byte_index += 7
+        # Guard against truncated frames
+        if len(address_field) < 7:
+            print("Error: truncated AX.25 frame data")
+            return
+        call_ssid, is_last_address, was_digipeated = get_callsign(address_field)
+        parsed_addresses.append({
+            'call': call_ssid,
+            'is_digipeater': len(parsed_addresses) > 1, # destination (0) and source (1) are not digipeaters
+            'was_digipeated': was_digipeated
+        })
+    # 2. Extract addresses and digipeater path
+    dest_call
 #    """Decodes the main parts of the AX.25 frame."""
 #    # AX.25 is byte-oriented, so we can use slicing
 #    dest_addr_field = frame_data[0:7]
