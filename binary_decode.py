@@ -21,42 +21,54 @@ def kiss_destuff(stuffed_data):
     
     return kiss_type_byte, ax25_frame
 
-def unshift_callsign(address_field):
-    """Converts the 6-byte shifted AX.25 callsign to readable ASCII."""
+def get_callsign(address_field):
+    """
+    Parses a 7-byte AX.25 address field
+    Returns: (callsign_ssid_str, is_last_address, was_digipeated)
+    """
     callsign = b''
-    # The callsign is the first 6 bytes of the 7-byte address field
+    # Extract callsign (first 6 bytes, unshifted)
     for byte in address_field[:6]:
-        # Unshift: (byte >> 1) to get the original ASCII character
         callsign += bytes([byte >> 1])
-
-    # The SSID is in the last byte (SSID is bits 1-4, so mask with 0b01111000 and shift)
-    # We also check the End-of-Address (Ea) bit (LSB)
+    # Extract SSID and Control bits (last byte)
     ssid_byte = address_field[6]
-    ssid = (ssid_byte >> 1) & 0x0F # extract the 4-bit SSID
+    ssid = (ssid_byte >> 1) & 0x0F          # SSID is bites 1-4 (4 bits total)
+    is_last_address = (ssid_byte & 0x01)    # Ea bit is the LSB (bit 0)
+    was_digipeated = (ssid_byte & 0x80)     # H bit (has been repeated) si the MSB (bit 7)
 
-    return f"{callsign.strip().decode('ascii')}-{ssid}"
+    callsign_str = callsign.strip().decode('ascii')
+    callsign_ssid_str = f"{callsign_str}-{ssid}"
+
+    return callsign_ssid_str, is_last_address, was_digipeated
 
 def parse_ax25_frame(frame_data):
-    """Decodes the main parts of the AX.25 frame."""
-    # AX.25 is byte-oriented, so we can use slicing
-    dest_addr_field = frame_data[0:7]
-    src_addr_field = frame_data[7:14]
+    """
+    Dynamically parses an AX.25 frame including a variable number of digipeaters
+    """
+    current_byte_index = 0
+    parsed_addresses = []
 
-    dest_call = unshift_callsign(dest_addr_field)
-    src_call = unshift_callsign(src_addr_field)
 
-    # Simple example assumes no digipeaters, so Control field starts at byte 14
-    control_field = frame_data[14]
-    pid_field = frame_data[15]
-
-    # The rest is the payload/information field
-    payload = frame_data[16:]
-
-    print(f"Destination : {dest_call} :: Source : {src_call} :: Control (Hex) : {hex(control_field)} :: PID (Hex) : {hex(pid_field)}")
-
-    # if PID is 0xF0 (no protocol), the payload is often ASCII text
-    if pid_field == 0xF0:
-        print(f"    Message : {payload.decode('ascii', errors='ignore')}"
-    else:
-        print(f"    Raw Payload : {payload.hed()}")
+#    """Decodes the main parts of the AX.25 frame."""
+#    # AX.25 is byte-oriented, so we can use slicing
+#    dest_addr_field = frame_data[0:7]
+#    src_addr_field = frame_data[7:14]
+#
+#    dest_call = unshift_callsign(dest_addr_field)
+#    src_call = unshift_callsign(src_addr_field)
+#
+#    # Simple example assumes no digipeaters, so Control field starts at byte 14
+#    control_field = frame_data[14]
+#    pid_field = frame_data[15]
+#
+#    # The rest is the payload/information field
+#    payload = frame_data[16:]
+#
+#    print(f"Destination : {dest_call} :: Source : {src_call} :: Control (Hex) : {hex(control_field)} :: PID (Hex) : {hex(pid_field)}")
+#
+#    # if PID is 0xF0 (no protocol), the payload is often ASCII text
+#    if pid_field == 0xF0:
+#        print(f"    Message : {payload.decode('ascii', errors='ignore')}")
+#    else:
+#        print(f"    Raw Payload : {payload.hed()}")
 
