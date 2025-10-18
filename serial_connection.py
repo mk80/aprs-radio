@@ -60,9 +60,10 @@ class SerialTTY:
                         # decoding binary data
                         kiss_type_byte, ax25_frame = binary_decode.kiss_destuff(data)
                         print(f"[KISS_TYPE_BYTE] {kiss_type_byte} :: [AX.25] {ax25_frame}")
-                        callsign = binary_decode.unshift_callsign(ax25_frame)
-                        print(f"[CALLSIGN] {callsign}")
-
+                        # decode the AX.25 frame
+                        #   returns dest_call, src_call, digi_path, hex(control_field), hex(pid_field), payload_decoded
+                        destination_callsign, source_callsign, digipeater_path, control_field_hex, pid_field_hex, payload = parse_ax25_frame(ax25_frame)
+                        print(f"{destination_callsign} :: {source_callsign} :: {digipeater_path} :: {control_field_hex} :: {pid_field_hex} :: {payload}")
 
 
                 time.sleep(0.001) 
