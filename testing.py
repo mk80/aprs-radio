@@ -8,7 +8,7 @@ try:
 
     aprs_stream.start_streaming()
     while aprs_stream._running:
-        time.sleep(0.1)
+        time.sleep(0.001)
 
 except KeyboardInterrupt:
     print("\n user interrupt")
