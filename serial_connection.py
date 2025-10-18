@@ -64,7 +64,7 @@ class SerialTTY:
                         #   returns dest_call, src_call, digi_path, hex(control_field), hex(pid_field), payload_decoded
                         destination_callsign, source_callsign, digipeater_path, control_field_hex, pid_field_hex, payload = binary_decode.parse_ax25_frame(ax25_frame)
                         print(f"{destination_callsign} :: {source_callsign} :: {digipeater_path} :: {control_field_hex} :: {pid_field_hex} :: {payload}")
-                time.sleep(0.001) 
+                time.sleep(0.01) 
                     
             except SerialException as e:
                 print(f"Serial read error : {e}")
