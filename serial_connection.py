@@ -65,7 +65,6 @@ class SerialTTY:
                         destination_callsign, source_callsign, digipeater_path, control_field_hex, pid_field_hex, payload = binary_decode.parse_ax25_frame(ax25_frame)
                         print(f"{destination_callsign} :: {source_callsign} :: {digipeater_path} :: {control_field_hex} :: {pid_field_hex} :: {payload}")
                 time.sleep(0.01) 
-                    
             except SerialException as e:
                 print(f"Serial read error : {e}")
                 self._running = False
@@ -81,7 +80,6 @@ class SerialTTY:
             if not self.connect():
                 print("No connection established : connect before starting stream")
                 return
-            
         if not self._running:
             self._running = True
             self._thread = threading.Thread(target=self._read_data_loop)
@@ -97,7 +95,6 @@ class SerialTTY:
             if self._thread and self._thread.is_alive():
                 self._thread.join(timeout=2)
                 print("Stream halted")
-        
         if self.ser and self.ser.is_open:
             self.ser.close()
             print(f"Disconnecting: {self.port}")
