@@ -5,6 +5,7 @@ FESC = b'\xdb'
 TFEND = b'\xdc'
 TFESC = b'\xdd'
 
+
 def kiss_destuff(stuffed_data):
     """Reverses the KISS byte-stuffing and returns the raw AX.25 frame."""
     
@@ -26,6 +27,7 @@ def kiss_destuff(stuffed_data):
     
     return kiss_type_byte, ax25_frame
 
+
 def get_callsign(address_field):
     """
     Parses a 7-byte AX.25 address field
@@ -45,6 +47,7 @@ def get_callsign(address_field):
     callsign_ssid_str = f"{callsign_str}-{ssid}"
 
     return callsign_ssid_str, is_last_address, was_digipeated
+
 
 def parse_ax25_frame(frame_data):
     """

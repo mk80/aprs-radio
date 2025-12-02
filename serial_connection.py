@@ -5,15 +5,29 @@ import time
 import threading
 import binary_decode
 
+
 class SerialTTY:
 
-    def __init__(self, port='/dev/ttyACM0', baudrate=9600, timeout=1):
+    def __init__(self, port='/dev/ttyACM0', baudrate=9600, timeout=0):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
+        print(f"Opening serial port: {self.port} at {self.baudrate}")
+        try:
+            self.ser = serial.Serial(
+                    port=self.port,
+                    baudrate=self.baudrate,
+                    timeout=self.timeout
+            )
+            time.sleep(2)
+            if self.ser.is_open:
+                print("Connection established")
+                self.ser.flushInput()
+        except SerialException as e:
+            print(f"Error connecting : {self.port} : {e}")
+            self.ser = None
 
-        self.ser = None
-        self._running = False
+        self._running = True
         self._thread = None
 
         self.available_ports = serial.tools.list_ports.comports()
@@ -21,28 +35,6 @@ class SerialTTY:
     def list_ports(self):
         return self.available_ports
 
-    def connect(self):
-        if self.ser and self.ser.is_open:
-            print("Connection is already open")
-            return
-        
-        print(f"Connecting: {self.port} at {self.baudrate}")
-        try:
-            self.ser = serial.Serial(
-                port=self.port,
-                baudrate=self.baudrate,
-                timeout=self.timeout
-            )
-            time.sleep(2)
-            if self.ser.is_open:
-                print("Connection established")
-                self.ser.flushInput()
-                return True
-        except SerialException as e:
-            print(f"Error connecting : {self.port} : {e}")
-            self.ser = None
-            return False
-        
     def _read_data_loop(self):
         while self._running and self.ser and self.ser.is_open:
             try:
@@ -89,7 +81,7 @@ class SerialTTY:
         else:
             print("Streaming already in progress")
 
-    def stop_streaming(self):
+    def close(self):
         if self._running:
             self._running = False
             if self._thread and self._thread.is_alive():
