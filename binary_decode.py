@@ -4,25 +4,45 @@ class BinaryDecoder:
 
     def __init__(self):
         # --- KISS Protocol Constants (Hex Values) ---
-        FEND = b'\xc0'
-        FESC = b'\xdb'
-        TFEND = b'\xdc'
-        TFESC = b'\xdd'
+        self.FEND = b'\xc0'
+        self.FESC = b'\xdb'
+        self.TFEND = b'\xdc'
+        self.TFESC = b'\xdd'
 
-    def kiss_destuff(stuffed_data):
+
+    def decode_frame(self, raw_frame):
+        """
+        The RX thread calls this. It handles the full pipeline.
+        raw_frame is a full [FEND ... FEND] sequence.
+        """
+        # 1. Step 1: KISS De-stuff (passing content between FENDs)
+        # Assuming _kiss_destuff returns (kiss_type, ax25_frame)
+        kiss_type, ax25_payload = self._kiss_destuff(raw_frame[1:-1])
+
+        # 2. Check if it's a data frame (Type 0)
+        if kiss_type != b'\x00':
+            return None
+
+        # 3. Step 2: AX.25 Parse
+        # This calls your _parse_ax25_frame logic
+        decoded_dict = self._parse_ax25_frame(ax25_payload)
+        
+        return decoded_dict
+    
+    def _kiss_destuff(self, stuffed_data):
         """Reverses the KISS byte-stuffing and returns the raw AX.25 frame."""
 
         # 1. Strip the outer FEND bytes (if they are still present)
         # The data stream should already be delimited by 0xC0
-        if stuffed_data.startswith(FEND) and stuffed_data.endswith(FEND):
+        if stuffed_data.startswith(self.FEND) and stuffed_data.endswith(self.FEND):
             stuffed_data = stuffed_data[1:-1]
         # 2. De-stuff the data using byte replacements
         # This logic must be handled carefully to avoid double-processing
 
         # Replace FESC + TFEND (0xDB 0xDC) with FEND (0xC0)
-        data = stuffed_data.replace(FESC + TFEND, FEND)
+        data = stuffed_data.replace(self.FESC + self.TFEND, self.FEND)
         # Replace FESC + TFESC (0xDB 0xDD) with FESC (0xDB)
-        data = data.replace(FESC + TFESC, FESC)
+        data = data.replace(self.FESC + self.TFESC, self.FESC)
 
         # The first byte is the Type/Port byte, the rest is the AX.25 frame
         kiss_type_byte = data[0:1]
@@ -31,7 +51,7 @@ class BinaryDecoder:
         return kiss_type_byte, ax25_frame
 
 
-    def get_callsign(address_field):
+    def _get_callsign(self, address_field):
         """
         Parses a 7-byte AX.25 address field
         Returns: (callsign_ssid_str, is_last_address, was_digipeated)
@@ -52,7 +72,7 @@ class BinaryDecoder:
         return callsign_ssid_str, is_last_address, was_digipeated
 
 
-    def parse_ax25_frame(frame_data):
+    def _parse_ax25_frame(self, frame_data):
         """
         Dynamically parses an AX.25 frame including a variable number of digipeaters
         """
@@ -69,7 +89,7 @@ class BinaryDecoder:
             if len(address_field) < 7:
                 print("Error: truncated AX.25 frame data")
                 return
-            call_ssid, is_last_address, was_digipeated = get_callsign(address_field)
+            call_ssid, is_last_address, was_digipeated = self._get_callsign(address_field)
             parsed_addresses.append({
                 'call': call_ssid,
                 'was_digipeated': was_digipeated

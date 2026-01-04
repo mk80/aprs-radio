@@ -8,9 +8,9 @@ import binary_decode
 
 class SerialTTY:
 
-    def __init__(self, port='/dev/ttyACM0', baudrate=9600, timeout=0):
+    def __init__(self, port='/dev/ttyACM0', baud_rate=9600, timeout=0):
         self.port = port
-        self.baudrate = baudrate
+        self.baudrate = baud_rate
         self.timeout = timeout
         print(f"Opening serial port: {self.port} at {self.baudrate}")
         try:
@@ -35,6 +35,16 @@ class SerialTTY:
     def list_ports(self):
         return self.available_ports
 
+    def read_available_bytes(self):
+        bytes_to_read = self.ser.in_waiting
+        if bytes_to_read > 0:
+            return self.ser.read(bytes_to_read)
+        return b''
+
+    def write_frame(self, kiss_frame):
+        self.ser.write(kiss_frame)
+
+    # this is from read loop stream; no tx
     def _read_data_loop(self):
         while self._running and self.ser and self.ser.is_open:
             try:
@@ -66,7 +76,8 @@ class SerialTTY:
             except Exception as e:
                 print(f"Unexpected error : {e}")
                 break
-
+    
+    # this is from read loop stream; no tx
     def start_streaming(self):
         if self.ser is None or not self.ser.is_open:
             if not self.connect():
