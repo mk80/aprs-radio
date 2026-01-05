@@ -28,7 +28,7 @@ class BinaryEncoder:
         
         # ssid byte (7th byte) - defaults to 0 if not provided
         # using 0x60 as a base (binary 01100000) for compatability
-        ssid_byte = (0x60 | (ssid << 1))
+        ssid_byte = (0x60 | (int(ssid) << 1))
         
         # sed extension bit (bit 0)
         # 0 = more addresses follow (destination or digipeaters)
@@ -55,13 +55,17 @@ class BinaryEncoder:
         dest_bytes = self.encode_callsign(dest, dest_ssid, is_last=False)
 
         # encode source (e-bit = 1 because on digipeaters are used here)
-        source_bytes = self.encode_callsign(my_call, my_ssid, is_last=True)
+        source_bytes = self.encode_callsign(my_call, my_ssid, is_last=False)
+
+        # encode path :: WIDE1-1, WIDE2-1 (2 hops)
+        path1_bytes = self.encode_callsign("WIDE1", 1, is_last=False)
+        path2_bytes = self.encode_callsign("WIDE2", 1, is_last=True)
 
         # standard APRS header markers
         control_pid = b'\x03\xf0'
 
         # make the sandwich
-        return dest_bytes + source_bytes + control_pid + payload.encode('ascii')
+        return dest_bytes + source_bytes + path1_bytes + path2_bytes + control_pid + payload.encode('ascii')
     
     def kiss_stuff(self, ax25_frame):
         """
