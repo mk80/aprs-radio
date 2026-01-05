@@ -175,12 +175,12 @@ if __name__ == '__main__':
                 current_time = time.time()
                 if current_time - last_tx_time >= config['interval']:
                     # Build and wrap the packet
-                    raw_ax25 = protocol_encode.construct_aprs_frame(
+                    raw_ax25 = protocol_encode.construct_ax25_frame(
                         config['callsign'], 
                         config['ssid'], 
                         payload=payload_str
                     )
-                    kiss_packet = protocol_encode.kiss_wrap(raw_ax25)
+                    kiss_packet = protocol_encode.kiss_stuff(raw_ax25)
                     
                     # Transmit
                     tx_beacon(tnc_interface, serial_lock, kiss_packet)
