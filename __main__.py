@@ -18,14 +18,15 @@ def user_config():
         config['ssid'] = int(ssid_input) if ssid_input else 0
         
         print("\n--- Position Information ---")
-        # --- COORDINATE INPUT ---
-        try:
-            raw_coords = input("Enter Dec. Coordinates (e.g. 32.8,-117.1): ").strip()
-            lat_dec, lon_dec = map(float, raw_coords.split(','))
-            config['lat'], config['lon'] = convert_to_aprs_format(lat_dec, lon_dec)
-        except:
-            print("Invalid format. Defaulting to 0,0.")
-            config['lat'], config['lon'] = "0000.00N", "00000.00W"
+        print("\n[GPS Latitude: e.g., 32 degrees 47.99']")
+        lat_d = int(input("  Degrees: "))
+        lat_m = float(input("  Minutes: "))
+
+        print("\n[GPS Longitude: e.g., 117 degrees 01.59']")
+        lon_d = int(input("  Degrees: "))
+        lon_m = float(input("  Minutes: "))
+
+        config['lat'], config['lon'] = format_gps_to_aprs(lat_d, lat_m, lon_d, lon_m)
         
         # --- ICON SELECTION ---
         print("\nCommon Icons: [H]ome, [B]ike, [C]ar, [J]eep, [S]hip, [P]erson")
@@ -43,26 +44,18 @@ def user_config():
         config['interval'] = int(interval) * 60 if interval else 600
     return config
 
-def convert_to_aprs_format(lat, lon):
+def format_gps_to_aprs(lat_deg, lat_min, lon_deg, lon_lon_min):
     """
-    Converts decimal degrees to APRS DDMM.mmN and DDDMM.mmW format.
-    Example: 32.8033, -117.1515 -> ('3248.20N', '11709.09W')
+    Takes GPS Degrees/Minutes and formats them directly for APRS.
+    Example: 32, 47.9900, 117, 01.5932
     """
-    # Latitude
-    lat_dir = "N" if lat >= 0 else "S"
-    lat = abs(lat)
-    lat_deg = int(lat)
-    lat_min = (lat - lat_deg) * 60
-    # Format: 2 digits for degrees, 5 chars for MM.mm (zero-padded)
-    lat_str = f"{lat_deg:02d}{lat_min:05.2f}{lat_dir}"
+    # Latitude: DDMM.mmN (8 characters)
+    # %02d = 32, %05.2f = 47.99 -> '3247.99N'
+    lat_str = f"{int(lat_deg):02d}{lat_min:05.2f}N"
 
-    # Longitude
-    lon_dir = "E" if lon >= 0 else "W"
-    lon = abs(lon)
-    lon_deg = int(lon)
-    lon_min = (lon - lon_deg) * 60
-    # Format: 3 digits for degrees, 5 chars for MM.mm (zero-padded)
-    lon_str = f"{lon_deg:03d}{lon_min:05.2f}{lon_dir}"
+    # Longitude: DDDMM.mmW (9 characters)
+    # %03d = 117 (or 011), %05.2f = 01.59 -> '11701.59W'
+    lon_str = f"{int(abs(lon_deg)):03d}{lon_lon_min:05.2f}W"
 
     return lat_str, lon_str
 
@@ -183,7 +176,7 @@ if __name__ == '__main__':
                     kiss_packet = protocol_encode.kiss_stuff(raw_ax25)
                     
                     # Transmit
-                    tx_beacon(tnc_interface, serial_lock, kiss_packet)
+                    tx_beacon(tnc_interface, kiss_packet, serial_lock)
                     last_tx_time = current_time
                 
                 time.sleep(1) # Check timer every second
