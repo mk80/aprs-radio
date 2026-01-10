@@ -9,6 +9,10 @@ class BinaryDecoder:
         self.TFEND = b'\xdc'
         self.TFESC = b'\xdd'
 
+        # CRC-CCITT (X.25)
+        # initial value 0xFFFF, polynomial 0x1021, reflected
+        self.fcs_func = crcmod.predefined.mkPredefinedCrcFun('x-25')
+
 
     def decode_frame(self, raw_frame):
         """
@@ -149,10 +153,9 @@ class BinaryDecoder:
 
         # CRC-CCITT (X.25)
         # initial value 0xFFFF, polynomial 0x1021, reflected
-        fcs_func = crcmod.predefined.mkPredefinedCrcFun('x-25')
-        calculated_fcs = fcs_func(data_to_check)
+        calculated_fcs = self.fcs_func(data_to_check)
 
         # in AX.25, the FCS is stored in little-endian
         # the 'x-25' function returns a value that, when run over the
         # entire frame (data + fcs), should result in a magic constant 0x1D0F
-        return fcs_func(frame_bytes) == 0x1D0F
+        return self.fcs_func(frame_bytes) == 0x1D0F
