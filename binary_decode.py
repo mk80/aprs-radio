@@ -1,4 +1,4 @@
-
+import crcmod
 
 class BinaryDecoder:
 
@@ -118,3 +118,41 @@ class BinaryDecoder:
             marker = '*' if addr_data['was_digipeated'] else ''
             result['path'].append(f"{addr_data['call']}{marker}")
         return result
+
+    def to_tnc2(self, parsed_data):
+        """
+        Converts parsed dictionary back into TNC2 string for APRS-IS
+        
+        :param self: self reference
+        :param parsed_data: AX.25 dictionary of parsed frame
+        """
+        src = parsed_data['source']
+        dest = parsed_data['destination']
+        path = ",".join(parsed_data['path'])
+        payload = parsed_data['payload']
+
+        return f"{src}>{dest},{path}:{payload}"
+    
+    def check_crc(self, frame_bytes):
+        """
+        Validates the AX.25 Frame Check Sequence (FCS)
+        
+        :param self: self reference
+        :param frame_bytes: raw AX.25 frame (EXCLUDING the KISS 0xc0 flags)
+        """
+        if len(frame_bytes) < 3:
+            return False
+        
+        # the last 2 bytes are the FCS
+        received_fcs = frame_bytes[-2:]
+        data_to_check = frame_bytes[:-2]
+
+        # CRC-CCITT (X.25)
+        # initial value 0xFFFF, polynomial 0x1021, reflected
+        fcs_func = crcmod.predefined.mkPredefinedCrcFun('x-25')
+        calculated_fcs = fcs_func(data_to_check)
+
+        # in AX.25, the FCS is stored in little-endian
+        # the 'x-25' function returns a value that, when run over the
+        # entire frame (data + fcs), should result in a magic constant 0x1D0F
+        return fcs_func(frame_bytes) == 0x1D0F
