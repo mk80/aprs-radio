@@ -148,12 +148,12 @@ class BinaryDecoder:
             return False
         
         # the last 2 bytes are the FCS
-        received_fcs = frame_bytes[-2:]
-        data_to_check = frame_bytes[:-2]
+        #received_fcs = frame_bytes[-2:]
+        #data_to_check = frame_bytes[:-2]
 
         # CRC-CCITT (X.25)
         # initial value 0xFFFF, polynomial 0x1021, reflected
-        calculated_fcs = self.fcs_func(data_to_check)
+        #calculated_fcs = self.fcs_func(data_to_check)
 
         # in AX.25, the FCS is stored in little-endian
         # the 'x-25' function returns a value that, when run over the

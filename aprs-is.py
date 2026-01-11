@@ -1,8 +1,11 @@
 import aprslib
+import threading
+import queue
+import time
 
-class IGateway:
+class IGateway(threading.Thread):
 
-    def __init__(self, call):
+    def __init__(self, call, gate_queue):
         self.server = "rotate.aprs2.net"
         self.port = 14580
         token_file = './cs_token'
@@ -18,11 +21,26 @@ class IGateway:
         except Exception as err:
             print(f"ERROR : '{err}' : unexpected error reading file")
         
-        try:
-            self.aprs = aprslib.IS(self.callsign, passwd=self.passcode, host=self.server, port=self.port)
-            self.aprs.connect()
-        except Exception as err:
-            print(f"ERROR : '{err}' : unexpected error connecting to aprs-is")
+        super().__init__(daemon=True)
+        self.aprs = aprslib.IS(self.callsign, passwd=self.passcode, host=self.server, port=self.port)
+        self.queue = gate_queue
+
+    def run(self):
+        while True:
+            try:
+                # connect to the global network
+                self.aprs.connect()
+                print("--- Connected to APRS-IS ---")
+
+                while True:
+                    # wait for a packet from the RX thread
+                    packet_tnc2 = self.queue.get()
+                    # send it to the inter webs
+                    self.aprs.sendall(packet_tnc2)
+                    print(f"i Gated :: {packet_tnc2}")
+            except Exception as err:
+                print(f"APRS-IS connection lost ({err}) :: retrying in 3s...")
+                time.sleep(3)
             
     def gate_to_internet(self, raw_packet_string):
         """
