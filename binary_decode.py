@@ -1,4 +1,4 @@
-
+import crcmod
 
 class BinaryDecoder:
 
@@ -9,34 +9,47 @@ class BinaryDecoder:
         self.TFEND = b'\xdc'
         self.TFESC = b'\xdd'
 
+        # CRC-CCITT (X.25)
+        # initial value 0xFFFF, polynomial 0x1021, reflected
+        self.fcs_func = crcmod.predefined.mkPredefinedCrcFun('x-25')
+
 
     def decode_frame(self, raw_frame):
         """
         The RX thread calls this. It handles the full pipeline.
         raw_frame is a full [FEND ... FEND] sequence.
         """
-        # 1. Step 1: KISS De-stuff (passing content between FENDs)
+        # KISS De-stuff (passing content between FENDs)
         # Assuming _kiss_destuff returns (kiss_type, ax25_frame)
         kiss_type, ax25_payload = self._kiss_destuff(raw_frame[1:-1])
 
-        # 2. Check if it's a data frame (Type 0)
+        # debug message to see hex
+        #print(f"RAW PACKET (HEX) :: {ax25_payload.hex()}")
+
+        # Check if it's a data frame (Type 0)
         if kiss_type != b'\x00':
             return None
 
-        # 3. Step 2: AX.25 Parse
-        # This calls your _parse_ax25_frame logic
-        decoded_dict = self._parse_ax25_frame(ax25_payload)
+        # This calls your _parse_ax25_frame logic if crc check is good
+        # !!!!! CRC CHECK DONE IN TNC !!!!!
+        #if self.check_crc(ax25_payload):
+        #    decoded_dict = self._parse_ax25_frame(ax25_payload)
+        #else:
+        #    decoded_dict = ''
         
+        # AX.25 Parse
+        decoded_dict = self._parse_ax25_frame(ax25_payload)
+
         return decoded_dict
     
     def _kiss_destuff(self, stuffed_data):
         """Reverses the KISS byte-stuffing and returns the raw AX.25 frame."""
 
-        # 1. Strip the outer FEND bytes (if they are still present)
+        # Strip the outer FEND bytes (if they are still present)
         # The data stream should already be delimited by 0xC0
         if stuffed_data.startswith(self.FEND) and stuffed_data.endswith(self.FEND):
             stuffed_data = stuffed_data[1:-1]
-        # 2. De-stuff the data using byte replacements
+        # De-stuff the data using byte replacements
         # This logic must be handled carefully to avoid double-processing
 
         # Replace FESC + TFEND (0xDB 0xDC) with FEND (0xC0)
@@ -118,3 +131,49 @@ class BinaryDecoder:
             marker = '*' if addr_data['was_digipeated'] else ''
             result['path'].append(f"{addr_data['call']}{marker}")
         return result
+
+    def to_tnc2(self, parsed_data):
+        """
+        Converts parsed dictionary back into TNC2 string for APRS-IS
+        
+        :param self: self reference
+        :param parsed_data: AX.25 dictionary of parsed frame
+        """
+        src = parsed_data['source']
+        dest = parsed_data['destination']
+        path = ",".join(parsed_data['path'])
+        payload = parsed_data['payload']
+
+        return f"{src}>{dest},{path}:{payload}"
+    
+    # CRC check is being done by TNC
+    # leaving this here though in case for future use
+    def check_crc(self, frame_bytes):
+        """
+        Validates the AX.25 Frame Check Sequence (FCS)
+        
+        :param self: self reference
+        :param frame_bytes: raw AX.25 frame (EXCLUDING the KISS 0xc0 flags)
+        """
+        crc_pass = False
+
+        if len(frame_bytes) < 3:
+            return False
+        
+        # the last 2 bytes are the FCS
+        #received_fcs = frame_bytes[-2:]
+        #data_to_check = frame_bytes[:-2]
+
+        # CRC-CCITT (X.25)
+        # initial value 0xFFFF, polynomial 0x1021, reflected
+        #calculated_fcs = self.fcs_func(data_to_check)
+
+        # in AX.25, the FCS is stored in little-endian
+        # the 'x-25' function returns a value that, when run over the
+        # entire frame (data + fcs), should result in a magic constant 0x1D0F
+        crc_value = self.fcs_func(frame_bytes)
+        if crc_value == 0x1D0F:
+            crc_pass = True
+        else:
+            print(f" CRC Failed :: {crc_value}")
+        return crc_pass
