@@ -106,7 +106,7 @@ def rx_streaming_thread(tnc_interface, protocol_decode, lock, rx_gate_q, user_co
                     # 3. process the frame in the binary decoder
                     if len(complete_frame) > 2: # ignore empty frames like 0xc0 0xc0
                         result = protocol_decode.decode_frame(complete_frame)
-                        if result and result['source'] != user_conf['callsign']:
+                        if result and user_conf['callsign'] not in result['source']:
                             print(f"Packet Received: {result['source']} -> {result['destination']}")
                             print(f"Payload: {result['payload']}")
                             tnc2_str = protocol_decode.to_tnc2(result)
