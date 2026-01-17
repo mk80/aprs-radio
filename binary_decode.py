@@ -132,19 +132,23 @@ class BinaryDecoder:
             result['path'].append(f"{addr_data['call']}{marker}")
         return result
 
-    def to_tnc2(self, parsed_data):
+    def to_tnc2(self, parsed_data, callsign_s):
         """
         Converts parsed dictionary back into TNC2 string for APRS-IS
         
         :param self: self reference
         :param parsed_data: AX.25 dictionary of parsed frame
         """
+        # q code for bi-directional iGate
+        q_construct = "qAR"
+
         src = parsed_data['source']
         dest = parsed_data['destination']
         path = ",".join(parsed_data['path'])
+        igate_path = f"{path},{q_construct},{callsign_s}"
         payload = parsed_data['payload']
 
-        return f"{src}>{dest},{path}:{payload}"
+        return f"{src}>{dest},{igate_path}:{payload}"
     
     # CRC check is being done by TNC
     # leaving this here though in case for future use
