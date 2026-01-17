@@ -15,7 +15,6 @@ class IGateway(threading.Thread):
         token_file = './cs_token'
         self.passcode = ''
         self.callsign = call.upper()
-        self.ig_qer = ''
 
         try:
             with open(token_file,'r') as f:
