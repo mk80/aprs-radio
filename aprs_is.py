@@ -2,6 +2,7 @@ import aprslib
 import threading
 import time
 import queue
+import socket
 
 class IGateway(threading.Thread):
 
@@ -25,28 +26,32 @@ class IGateway(threading.Thread):
         except Exception as err:
             print(f"ERROR : '{err}' : unexpected error reading file")
         
-        print(f"callsign :: {self.callsign}")
-        print(f"passwd :: {self.passcode}")
-        print(f"host :: {self.server}")
-        print(f"port :: {self.port}")
-        self.ig_qer = gateway_q
+        #print(f"callsign :: {self.callsign}")
+        #print(f"passwd :: {self.passcode}")
+        #print(f"host :: {self.server}")
+        #print(f"port :: {self.port}")
+        self.igate_queue = gateway_q
         self.aprs = aprslib.IS(self.callsign, passwd=self.passcode, host=self.server, port=self.port)
 
-    def run(self):
+    def run(self): # TODO :: maybe add queue object as an arg
         while True:
             try:
-                while True:
-                    # wait for a packet from the RX thread
-                    packet_tnc2 = self.gateway_queue.get()
-                    # connect to the global network
-                    self.aprs.connect()
-                    print("--- Connecting to APRS-IS ---")
-                    # send it to the inter webs
-                    self.aprs.sendall(packet_tnc2)
-                    self.gateway_queue.task_done()
-                    print(f"i Gated :: {packet_tnc2}")
+                if not self.aprs._connected:
+                    try:
+                        print("--- Connecting to APRS-IS ---")
+                        self.aprs.connect()
+                    except Exception as er:
+                        print(f"APRS-IS initial connection failed ({er}) :: retrying in 3s...")
+                        time.sleep(3)
+                # wait for a packet from the RX thread
+                packet_tnc2 = self.igate_queue.get()
+                
+                # send it to the inter webs
+                self.aprs.sendall(packet_tnc2)
+                self.igate_queue.task_done()
+                print(f"i Gated :: {packet_tnc2}")
             except Exception as err:
-                print(f"APRS-IS connection lost ({err}) :: retrying in 3s...")
+                print(f"APRS-IS send packet failed ({err}) :: re-connecting in 3s...")
                 time.sleep(3)
     
     # TODO :: this may not be needed.. def not used right now

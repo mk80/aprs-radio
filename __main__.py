@@ -3,6 +3,9 @@ import time
 import threading
 import binary_decode
 import binary_encode
+import aprs_is
+import queue
+import multiprocessing
 
 def user_config():
     config = {}
@@ -29,11 +32,12 @@ def user_config():
         config['lat'], config['lon'] = format_gps_to_aprs(lat_d, lat_m, lon_d, lon_m)
         
         # --- ICON SELECTION ---
-        print("\nCommon Icons: [H]ome, [B]ike, [C]ar, [J]eep, [S]hip, [P]erson")
+        print("\nCommon Icons: [H]ome, [B]ike, [C]ar, [J]eep, [S]hip, [P]erson, [G]ateway")
         icon_choice = input("Select Icon: ").strip().lower()
         icons = {
             'h': ('/', '-'), 'b': ('/', '<'), 'c': ('/', '>'),
-            'j': ('/', 'j'), 's': ('/', 's'), 'p': ('/', '[')
+            'j': ('/', 'j'), 's': ('/', 's'), 'p': ('/', '['),
+            'g': ('/', '&')
         }
         # default to home if choice is invalid
         config['table'], config['symbol'] = icons.get(icon_choice, ('/', '-'))
@@ -63,7 +67,7 @@ def format_gps_to_aprs(lat_deg, lat_min, lon_deg, lon_lon_min):
 serial_lock = threading.Lock() #  CRUCIAL : used to protect the SerialTTY object
 FEND = b'\xc0'
 
-def rx_streaming_thread(tnc_interface, protocol_decode, lock):
+def rx_streaming_thread(tnc_interface, protocol_decode, lock, rx_gate_q, user_conf):
     """
     RX streaming logic: External function, manages concurrency and framing.
     """
@@ -102,9 +106,15 @@ def rx_streaming_thread(tnc_interface, protocol_decode, lock):
                     # 3. process the frame in the binary decoder
                     if len(complete_frame) > 2: # ignore empty frames like 0xc0 0xc0
                         result = protocol_decode.decode_frame(complete_frame)
-                        if result:
+                        if result and result['source'] != user_conf['callsign']:
                             print(f"Packet Received: {result['source']} -> {result['destination']}")
                             print(f"Payload: {result['payload']}")
+                            tnc2_str = protocol_decode.to_tnc2(result)
+                            rx_gate_q.put(tnc2_str)
+                        elif result['source'] == user_conf['callsign']:
+                            print(f"Packet Duplicate :: callsign :: {result['source']} :: {user_conf['callsign']}")
+                        else:
+                            print("Packet Decode failed!")
                     # remove the processed frame from the buffer
                     current_data = current_data[second_fend + 1:]
                 else:
@@ -139,11 +149,15 @@ if __name__ == '__main__':
         tnc_interface = serial_connection.SerialTTY(baud_rate=115200)
         print(f"visible ports : {tnc_interface.available_ports}")
         protocol_decode = binary_decode.BinaryDecoder()
+        gateway_q_instance = queue.Queue()
+        igate_thread = aprs_is.IGateway(config['callsign'], gateway_q=gateway_q_instance)
+        igate_thread.daemon = True
+        igate_thread.start()
         
         # Start the RX streaming thread, passing the shared objects
         rx_thread = threading.Thread(
             target=rx_streaming_thread, 
-            args=(tnc_interface, protocol_decode, serial_lock)
+            args=(tnc_interface, protocol_decode, serial_lock, gateway_q_instance, config)
         )
         rx_thread.daemon = True
         rx_thread.start()

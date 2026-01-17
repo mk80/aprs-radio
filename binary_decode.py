@@ -23,17 +23,23 @@ class BinaryDecoder:
         # Assuming _kiss_destuff returns (kiss_type, ax25_frame)
         kiss_type, ax25_payload = self._kiss_destuff(raw_frame[1:-1])
 
+        # debug message to see hex
+        #print(f"RAW PACKET (HEX) :: {ax25_payload.hex()}")
+
         # Check if it's a data frame (Type 0)
         if kiss_type != b'\x00':
             return None
 
-        # AX.25 Parse
         # This calls your _parse_ax25_frame logic if crc check is good
-        if self.check_crc(ax25_payload):
-            decoded_dict = self._parse_ax25_frame(ax25_payload)
-        else:
-            decoded_dict = ''
+        # !!!!! CRC CHECK DONE IN TNC !!!!!
+        #if self.check_crc(ax25_payload):
+        #    decoded_dict = self._parse_ax25_frame(ax25_payload)
+        #else:
+        #    decoded_dict = ''
         
+        # AX.25 Parse
+        decoded_dict = self._parse_ax25_frame(ax25_payload)
+
         return decoded_dict
     
     def _kiss_destuff(self, stuffed_data):
@@ -140,6 +146,8 @@ class BinaryDecoder:
 
         return f"{src}>{dest},{path}:{payload}"
     
+    # CRC check is being done by TNC
+    # leaving this here though in case for future use
     def check_crc(self, frame_bytes):
         """
         Validates the AX.25 Frame Check Sequence (FCS)
