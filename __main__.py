@@ -107,10 +107,10 @@ def rx_streaming_thread(tnc_interface, protocol_decode, lock, rx_gate_q, callsig
                     if len(complete_frame) > 2: # ignore empty frames like 0xc0 0xc0
                         result = protocol_decode.decode_frame(complete_frame)
                         if result and callsign != result['source']:
-                            print(f"Packet Received: {result['source']} -> {result['destination']}")
-                            print(f"Payload: {result['payload']}")
                             tnc2_str = protocol_decode.to_tnc2(result, callsign)
                             rx_gate_q.put(tnc2_str)
+                            print(f"Packet Received: {result['source']} -> {result['destination']}")
+                            print(f"Payload: {result['payload']}")
                         elif callsign == result['source']:
                             print(f"Packet Duplicate :: callsign :: {result['source']} :: {callsign}")
                         else:
