@@ -5,6 +5,9 @@ import binary_decode
 import binary_encode
 import aprs_is
 import signal
+import uvloop
+
+# ... (imports remain) ...
 
 # Global flag for shutdown
 SHUTDOWN = False
@@ -74,8 +77,6 @@ async def async_read_serial(tnc_interface):
     """Non-blocking wrapper for reading serial bytes."""
     # Since tnc_interface.read_available_bytes() is non-blocking (returns empty if none),
     # we can run it directly. If it was blocking, we'd use loop.run_in_executor.
-    # 1. READ: Access the shared resource (tnc_interface)
-    # logic is handled inside the method
     return tnc_interface.read_available_bytes()
 
 async def async_write_serial(tnc_interface, data):
@@ -85,16 +86,17 @@ async def async_write_serial(tnc_interface, data):
 async def async_rx_task(tnc_interface, protocol_decode, gateway_q, callsign):
     """
     Async RX loop.
+    Optimized to use bytearray buffers and in-place modification.
     """
     print("--- RX Task Started ---")
-    current_data = b'' # Buffer to collect bytes
+    current_data = bytearray() # Mutable buffer
     
     while not SHUTDOWN:
         try:
             new_data = await async_read_serial(tnc_interface)
             
             if new_data:
-                current_data += new_data
+                current_data.extend(new_data)
             else:
                 # Allow other tasks to run if no data
                 await asyncio.sleep(0.001)
@@ -107,7 +109,8 @@ async def async_rx_task(tnc_interface, protocol_decode, gateway_q, callsign):
 
                 # if FEND is not at the start (index 0), discard the junk before it
                 if first_fend > 0:
-                    current_data = current_data[first_fend:]
+                    del current_data[:first_fend]
+                    # Loop again to find the FEND at 0
                     continue
                 
                 # now the buffer definitely starts with 0xc0
@@ -118,18 +121,20 @@ async def async_rx_task(tnc_interface, protocol_decode, gateway_q, callsign):
                 if second_fend != -1:
                     # we found a complete frame
                     # extract the frame (including both FENDs)
+                    # Note: Slicing bytearray returns bytearray. binary_decode should handle it.
                     complete_frame = current_data[:second_fend + 1]
                     
                     # 3. process the frame in the binary decoder
                     if len(complete_frame) > 2: # ignore empty frames like 0xc0 0xc0
                         try:
+                            # We clone complete_frame implicitly by slicing if we needed to, 
+                            # but here we pass it. If decode modifies it, we might care, but it doesn't.
+                            # It's safer to convert to bytes if unsure, but for speed we try to avoid it.
                             result = protocol_decode.decode_frame(complete_frame)
                             if result and callsign != result['source']:
                                 tnc2_str = protocol_decode.to_tnc2(result, callsign)
                                 await gateway_q.put(tnc2_str)
                                 # Async logging (simulated via print, but it doesn't block the loop logic much)
-                                # print(f"Packet Received: {result['source']} -> {result['destination']}")
-                                # print(f"Payload: {result['payload']}")
                                 print(f"RX: {result['source']} -> {result['destination']}")
                             elif callsign == result['source']:
                                 print(f"Packet Duplicate :: callsign :: {result['source']} :: {callsign}")
@@ -139,7 +144,7 @@ async def async_rx_task(tnc_interface, protocol_decode, gateway_q, callsign):
                             pass # decode error, ignore
                             
                     # remove the processed frame from the buffer
-                    current_data = current_data[second_fend + 1:]
+                    del current_data[:second_fend + 1]
                 else:
                     # we have the start of a packet, but the end hasn't arrived yet
                     break
@@ -266,6 +271,7 @@ async def main():
 
 if __name__ == '__main__':
     try:
+        uvloop.install()
         asyncio.run(main())
     except KeyboardInterrupt:
         pass # Handled inside main
