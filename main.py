@@ -271,7 +271,14 @@ async def main():
 
 if __name__ == '__main__':
     try:
-        uvloop.install()
+        try:
+            uvloop.install()
+            print("Using uvloop for high-performance event loop.")
+        except ImportError:
+            print("uvloop not found, using standard asyncio loop.")
+        except Exception as e:
+            print(f"Could not install uvloop: {e}. Using standard asyncio loop.")
+            
         asyncio.run(main())
     except KeyboardInterrupt:
         pass # Handled inside main

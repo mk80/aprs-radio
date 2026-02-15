@@ -40,9 +40,15 @@ A high-performance, asynchronous Python application for sending and receiving AP
     ```bash
     pip install -r requirements.txt
     ```
-    *Dependencies include `pyserial`, `aprslib`, `uvloop`, and `crcmod`.*
+    *Dependencies include `pyserial`, `aprslib`, and `crcmod`.*
 
-4.  **APRS-IS Passcode**:
+4.  **Optional: Install uvloop (Performance)**:
+    On supported architectures (x86_64, aarch64), install `uvloop` for 2-4x faster event loop performance. If on RISC-V, this may require manual compilation of `libuv`.
+    ```bash
+    pip install uvloop
+    ```
+
+5.  **APRS-IS Passcode**:
     Create a file named `cs_token` in the root directory containing your APRS-IS passcode (integer).
     ```bash
     echo "12345" > cs_token
