@@ -5,7 +5,6 @@ import binary_decode
 import binary_encode
 import aprs_is
 import signal
-import uvloop
 
 # ... (imports remain) ...
 
