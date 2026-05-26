@@ -4,73 +4,93 @@ import time
 import queue
 import socket
 
-class IGateway(threading.Thread):
+import asyncio
+import logging
 
-    def __init__(self, call, gateway_q):
-        # prepares object to behave like a thread
-        super().__init__(daemon=True)
+class AsyncIGate:
+    def __init__(self, callsign, passcode, gateway_q, host="rotate.aprs2.net", port=14580):
+        self.callsign = callsign
+        self.passcode = passcode
+        self.host = host
+        self.port = port
+        self.queue = gateway_q
+        self.reader = None
+        self.writer = None
+        self.connected = False
 
-        self.server = "rotate.aprs2.net"
-        self.port = 14580
-        token_file = './cs_token'
-        self.passcode = ''
-        self.callsign = call.upper()
-
-        try:
-            with open(token_file,'r') as f:
-                self.passcode = f.readline()
-                self.passcode = self.passcode.strip()
-        except FileNotFoundError:
-            print(f"ERROR : '{token_file}' was not found")
-        except Exception as err:
-            print(f"ERROR : '{err}' : unexpected error reading file")
-        
-        #print(f"callsign :: {self.callsign}")
-        #print(f"passwd :: {self.passcode}")
-        #print(f"host :: {self.server}")
-        #print(f"port :: {self.port}")
-        self.igate_queue = gateway_q
-        self.aprs = aprslib.IS(self.callsign, passwd=self.passcode, host=self.server, port=self.port)
-
-    def run(self): # TODO :: maybe add queue object as an arg
+    async def connect(self):
         while True:
             try:
-                if not self.aprs._connected:
-                    try:
-                        print("--- Connecting to APRS-IS ---")
-                        self.aprs.connect()
-                    except Exception as er:
-                        print(f"APRS-IS initial connection failed ({er}) :: retrying in 3s...")
-                        time.sleep(3)
-                # wait for a packet from the RX thread
-                packet_tnc2 = self.igate_queue.get()
+                print(f"--- Connecting to APRS-IS ({self.host}:{self.port}) ---")
+                self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
                 
-                # send it to the inter webs
-                self.aprs.sendall(packet_tnc2)
-                self.igate_queue.task_done()
-                print(f"i Gated :: {packet_tnc2}")
-            except Exception as err:
-                print(f"APRS-IS send packet failed ({err}) :: re-connecting in 3s...")
-                time.sleep(3)
-    
-    # TODO :: this may not be needed.. def not used right now
-    def gate_to_internet(self, raw_packet_string):
-        """
-        Sending packet to APRS-IS
-        
-        :param self: self reference
-        :param raw_packet_string: TNC2 formatted string :: 'CALL>DEST,PATH:PAYLOAD'
-        """
-        try:
-            self.aprs.sendall(raw_packet_string)
-            print(f"uploaded to APRS-IS :: {raw_packet_string}")
-        except Exception as err:
-            print(f"ERROR :: failed to upload :: {err}")
+                # TCP_NODELAY to disable Nagle's algorithm for lower latency
+                sock = self.writer.get_extra_info('socket')
+                if sock:
+                    import socket
+                    try:
+                        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    except Exception as e:
+                        print(f"Warning: Could not set TCP_NODELAY: {e}")
 
-    def disconnect(self):
+                # Login
+                login_str = f"user {self.callsign} pass {self.passcode} vers AsyncAPRS 0.1\r\n"
+                self.writer.write(login_str.encode('ascii'))
+                await self.writer.drain()
+                
+                # Read login response
+                response = await self.reader.read(1024)
+                print(f"APRS-IS Login Response: {response.decode('ascii', errors='ignore').strip()}")
+                
+                self.connected = True
+                return # Connected successfully
+
+            except Exception as e:
+                print(f"APRS-IS Connection Failed: {e}. Retrying in 5s...")
+                self.connected = False
+                await asyncio.sleep(5)
+
+    async def send_loop(self):
         """
-        Disconnect from APRS-IS server
-        
-        :param self: self reference
+        Continuously consumes packets from the queue and sends them to APRS-IS.
+        Maintains connection.
         """
-        self.aprs.close()
+        # Ensure initial connection
+        await self.connect()
+
+        while True:
+            try:
+                packet = await self.queue.get()
+                if not self.connected:
+                    await self.connect()
+                
+                if packet:
+                    line = packet + "\r\n"
+                    self.writer.write(line.encode('ascii'))
+                    await self.writer.drain()
+                    print(f"iGated >> {packet}")
+                    
+                self.queue.task_done()
+                
+            except Exception as e:
+                print(f"Error in send_loop: {e}")
+                self.connected = False
+                # If we fail to send, we might lose that packet or we could try to re-queue it.
+                # For now, simplest is to just reconnect and let the next packet go through.
+                # Optional: await self.connect() here immediately?
+                await asyncio.sleep(1) # Backoff slightly
+
+    async def keepalive(self):
+        """
+        Optional: Send a keepalive comment if idle for a long time.
+        APRS-IS usually terminates if no data for 20 mins.
+        We are RX mostly, so we might need this if traffic is low.
+        """
+        while True:
+            await asyncio.sleep(300) # 5 minutes
+            if self.connected:
+                try:
+                    self.writer.write(f"# {self.callsign} keepalive\r\n".encode('ascii'))
+                    await self.writer.drain()
+                except Exception:
+                    self.connected = False

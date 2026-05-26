@@ -1,1 +1,42 @@
-/cs_token
+# Virtual Environment
+env/
+venv/
+.venv/
+.env
+
+# Secrets
+cs_token
+*.token
+*.key
+*.pem
+
+# Python Artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# IDEs
+.idea/
+.vscode/
+
+# System
+.DS_Store
