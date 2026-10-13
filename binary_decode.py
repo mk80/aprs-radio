@@ -135,7 +135,7 @@ class BinaryDecoder:
     def to_tnc2(self, parsed_data, callsign_s):
         """
         Converts parsed dictionary back into TNC2 string for APRS-IS
-        
+
         :param self: self reference
         :param parsed_data: AX.25 dictionary of parsed frame
         """
@@ -144,11 +144,14 @@ class BinaryDecoder:
 
         src = parsed_data['source']
         dest = parsed_data['destination']
-        path = ",".join(parsed_data['path'])
-        igate_path = f"{path},{q_construct},{callsign_s}"
         payload = parsed_data['payload']
 
-        return f"{src}>{dest},{igate_path}:{payload}"
+        # Build the hop list after the destination. For a packet heard direct
+        # (empty digi path), skip the path segment entirely — otherwise the
+        # resulting ",,qAR,..." is malformed TNC2 and APRS-IS drops the line,
+        # so the gate never gets credit for direct packets.
+        hops = list(parsed_data['path']) + [q_construct, callsign_s]
+        return f"{src}>{dest},{','.join(hops)}:{payload}"
     
     # CRC check is being done by TNC
     # leaving this here though in case for future use
