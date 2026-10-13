@@ -121,10 +121,18 @@ async def async_rx_task(tnc_interface, protocol_decode, gateway_q, callsign):
                         try:
                             result = protocol_decode.decode_frame(complete_frame)
                             if result and callsign != result['source']:
-                                tnc2_str = protocol_decode.to_tnc2(result, callsign)
-                                t_formatted = time.perf_counter_ns()
-                                await gateway_q.put((tnc2_str, t_rx, t_formatted))
-                                print(f"RX: {result['source']} -> {result['destination']}")
+                                if result.get('payload', '').startswith('}'):
+                                    # 3rd-party packet. The APRS spec forbids
+                                    # iGates from uplinking these to APRS-IS;
+                                    # aprsc silently drops them with
+                                    # rx_errs[10] = party_3rd_ip. Skipping here
+                                    # saves a wasted round trip to the server.
+                                    print(f"RX: {result['source']} -> {result['destination']} (3rd-party, not iGating)")
+                                else:
+                                    tnc2_str = protocol_decode.to_tnc2(result, callsign)
+                                    t_formatted = time.perf_counter_ns()
+                                    await gateway_q.put((tnc2_str, t_rx, t_formatted))
+                                    print(f"RX: {result['source']} -> {result['destination']}")
                             elif callsign == result['source']:
                                 print(f"Packet Duplicate :: callsign :: {result['source']} :: {callsign}")
                             else:

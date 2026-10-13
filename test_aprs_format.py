@@ -130,6 +130,58 @@ class CallsignRenderingTests(unittest.TestCase):
         self.assertNotIn("APRS-0", line)
 
 
+class ThirdPartyDetectionTests(unittest.TestCase):
+    """APRS iGates must not uplink 3rd-party packets (payload starts with `}`)
+    — APRS-IS silently rejects them (rx_errs[10] = party_3rd_ip in aprsc).
+    main.py:async_rx_task gates on `result['payload'].startswith('}')`; these
+    tests pin the two assumptions that gate rests on: (1) a 3rd-party AX.25
+    frame actually decodes to a payload whose first byte is '}', and (2) a
+    normal position report does not.
+    """
+
+    def setUp(self):
+        self.decoder = binary_decode.BinaryDecoder()
+
+    @staticmethod
+    def _encode_address(callsign, ssid, is_last=False):
+        padded = callsign.upper().ljust(6)[:6]
+        addr = bytearray(ord(c) << 1 for c in padded)
+        ssid_byte = 0x60 | ((ssid & 0x0F) << 1) | (0x01 if is_last else 0x00)
+        addr.append(ssid_byte)
+        return bytes(addr)
+
+    def _build_kiss(self, payload):
+        """Wrap a payload in a minimal valid AX.25 + KISS frame."""
+        dest = self._encode_address("APRS", 0, is_last=False)
+        source = self._encode_address("KM6VOM", 9, is_last=True)
+        ax25 = dest + source + b"\x03\xf0" + payload
+        return b"\xc0\x00" + ax25 + b"\xc0"
+
+    def test_third_party_payload_detected(self):
+        """Payload starts with '}' => we must detect and skip."""
+        payload = b"}N0CALL-1>APRS,TCPIP*,qAC,SERVER:!3247.99N/11701.59W-inner"
+        result = self.decoder.decode_frame(self._build_kiss(payload))
+        self.assertIsNotNone(result)
+        self.assertTrue(
+            result['payload'].startswith('}'),
+            f"3rd-party payload must start with '}}', got: {result['payload'][:10]!r}",
+        )
+
+    def test_position_report_not_detected_as_third_party(self):
+        """Payload starts with '!' (position) => must not be flagged."""
+        payload = b"!3247.99N/11701.59W-normal position"
+        result = self.decoder.decode_frame(self._build_kiss(payload))
+        self.assertIsNotNone(result)
+        self.assertFalse(result['payload'].startswith('}'))
+
+    def test_status_report_not_detected_as_third_party(self):
+        """Payload starts with '>' (status) => must not be flagged."""
+        payload = b">just a status message"
+        result = self.decoder.decode_frame(self._build_kiss(payload))
+        self.assertIsNotNone(result)
+        self.assertFalse(result['payload'].startswith('}'))
+
+
 class LoginVerifiedParseTests(unittest.TestCase):
     """The guard that refuses to run on an unverified login depends on this
     parse being correct. 'unverified' contains 'verified' as a substring, so
