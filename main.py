@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import kiss_tcp
 import time
@@ -7,10 +8,15 @@ import binary_encode
 import aprs_is
 import signal
 
-# ... (imports remain) ...
-
 # Global flag for shutdown
 SHUTDOWN = False
+
+CONFIG_PATH = './config.json'
+DEFAULT_APRS_IS_SERVER = 'noam.aprs2.net'
+# Legacy generic destination — picked as the default because this project is
+# generic; operators register their own APZxxx experimental code (or a
+# registered device ID) via the startup prompt or by editing config.json.
+DEFAULT_DEVICE_CODE = 'APRS'
 
 def user_config():
     config = {}
@@ -18,12 +24,15 @@ def user_config():
 
     # Ask for Callsign first because it is required for IGate login regardless of RX/TX mode
     config['callsign'] = input("Enter Callsign: ").strip().upper()
-    
+
     ssid_input = input("Enter SSID (0-15, leave blank for 0): ").strip()
     config['ssid'] = int(ssid_input) if ssid_input else 0
 
     mode = input("Select Mode ([R]X only or [B]oth RX/TX): ").strip().lower()
     config['mode'] = 'both' if mode == 'b' else 'rx'
+
+    server = input(f"APRS-IS server [{DEFAULT_APRS_IS_SERVER}]: ").strip()
+    config['aprs_is_server'] = server or DEFAULT_APRS_IS_SERVER
 
     if config['mode'] == 'both':
         print("\n--- Position Information ---")
@@ -36,7 +45,7 @@ def user_config():
         lon_m = float(input("  Minutes: "))
 
         config['lat'], config['lon'] = format_gps_to_aprs(lat_d, lat_m, lon_d, lon_m)
-        
+
         # --- ICON SELECTION ---
         print("\nCommon Icons: [H]ome, [B]ike, [C]ar, [J]eep, [S]hip, [P]erson, [G]ateway")
         icon_choice = input("Select Icon: ").strip().lower()
@@ -47,12 +56,41 @@ def user_config():
         }
         # default to home if choice is invalid
         config['table'], config['symbol'] = icons.get(icon_choice, ('/', '-'))
-        
+
         config['message'] = input("Enter Beacon Message: ").strip()
-        
+
         interval = input("Beacon interval in minutes (e.g., 10): ").strip()
         config['interval'] = int(interval) * 60 if interval else 600
-    
+
+        device_code = input(f"Device code [{DEFAULT_DEVICE_CODE}]: ").strip().upper()
+        config['device_code'] = device_code or DEFAULT_DEVICE_CODE
+
+    return config
+
+
+def load_or_create_config():
+    """Load ./config.json if present; otherwise run the wizard and persist.
+
+    Reconfigure by deleting the file. Secrets (cs_token) live elsewhere and
+    aren't touched here; config.json is .gitignored because it still carries
+    lat/lon which is modestly sensitive.
+    """
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH) as f:
+            config = json.load(f)
+        # One-line summary so you can see what you're about to run with.
+        call_ssid = f"{config.get('callsign')}-{config.get('ssid')}"
+        summary = f"{call_ssid}, {config.get('mode')}, APRS_IS={config.get('aprs_is_server')}"
+        if config.get('mode') == 'both':
+            summary += f", device={config.get('device_code')}"
+        print(f"Loaded {CONFIG_PATH}: {summary}")
+        print(f"(delete {CONFIG_PATH} to re-run the wizard)")
+        return config
+
+    config = user_config()
+    with open(CONFIG_PATH, 'w') as f:
+        json.dump(config, f, indent=2)
+    print(f"Saved config to {CONFIG_PATH}.")
     return config
 
 def format_gps_to_aprs(lat_deg, lat_min, lon_deg, lon_lon_min):
@@ -175,8 +213,9 @@ async def async_tx_task(tnc_interface, config):
                 print("TX: Sending Beacon...")
                 # Build and wrap the packet
                 raw_ax25 = protocol_encode.construct_ax25_frame(
-                    config['callsign'], 
-                    config['ssid'], 
+                    config['callsign'],
+                    config['ssid'],
+                    dest=config.get('device_code', DEFAULT_DEVICE_CODE),
                     payload=payload_str
                 )
                 kiss_packet = protocol_encode.kiss_stuff(raw_ax25)
@@ -196,8 +235,9 @@ async def async_tx_task(tnc_interface, config):
 async def main():
     global SHUTDOWN
     
-    # 1. Configuration (Sync)
-    config = user_config()
+    # 1. Configuration (Sync) — loaded from ./config.json or built via wizard
+    #    on first run; see load_or_create_config().
+    config = load_or_create_config()
     call_ssid = f"{config['callsign']}-{config['ssid']}"
 
     # 2. Setup Resources
@@ -222,11 +262,17 @@ async def main():
     except Exception:
         print("Warning: Could not read cs_token")
 
-    # Allow pinning to a specific APRS-IS server via env var — the regional
-    # pool round-robins across servers with varying RTT, and for dedupe-race
-    # work the lowest-RTT endpoint matters a lot. T2BC (44.135.208.225) and
-    # T2LANE (44.26.110.252) measured well from this location; see README.
-    aprs_host = os.environ.get('APRS_IS_SERVER', 'noam.aprs2.net')
+    # APRS-IS host precedence: APRS_IS_SERVER env var > config.json > default.
+    # The env var lets you one-off override (e.g. probe a different T2 server)
+    # without editing config. For dedupe-race work the lowest-RTT endpoint
+    # matters a lot — the regional pool round-robins across servers with wide
+    # RTT variance (T2BC 44.135.208.225, T2LANE 44.26.110.252, T2SJC
+    # 44.10.10.10 all measured well from SoCal).
+    aprs_host = (
+        os.environ.get('APRS_IS_SERVER')
+        or config.get('aprs_is_server')
+        or DEFAULT_APRS_IS_SERVER
+    )
     igate = aprs_is.AsyncIGate(call_ssid, passcode, gateway_q, host=aprs_host)
 
     # Connect to APRS-IS up front so we can verify the passcode before launching
