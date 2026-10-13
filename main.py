@@ -1,4 +1,5 @@
 import asyncio
+import os
 import kiss_tcp
 import time
 import binary_decode
@@ -213,7 +214,12 @@ async def main():
     except Exception:
         print("Warning: Could not read cs_token")
 
-    igate = aprs_is.AsyncIGate(call_ssid, passcode, gateway_q)
+    # Allow pinning to a specific APRS-IS server via env var — the regional
+    # pool round-robins across servers with varying RTT, and for dedupe-race
+    # work the lowest-RTT endpoint matters a lot. T2BC (44.135.208.225) and
+    # T2LANE (44.26.110.252) measured well from this location; see README.
+    aprs_host = os.environ.get('APRS_IS_SERVER', 'noam.aprs2.net')
+    igate = aprs_is.AsyncIGate(call_ssid, passcode, gateway_q, host=aprs_host)
 
     # Connect to APRS-IS up front so we can verify the passcode before launching
     # any tasks. Unverified logins have their iGate uplink silently dropped by
