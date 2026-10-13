@@ -79,6 +79,57 @@ class ToTnc2Tests(unittest.TestCase):
         self.assertTrue(line.split(":", 1)[0].endswith(",qAR,N0GATE-10"))
 
 
+class CallsignRenderingTests(unittest.TestCase):
+    """Standard APRS convention: SSID 0 renders as the bare callsign.
+    Non-zero SSIDs render as 'CALL-N'. aprs.fi and other strict consumers
+    treat 'APRS-0' as non-standard and may drop or mis-aggregate it.
+    """
+
+    def setUp(self):
+        self.decoder = binary_decode.BinaryDecoder()
+
+    @staticmethod
+    def _encode_address(callsign, ssid, is_last=False):
+        """Build a 7-byte AX.25 address field for a given call/SSID."""
+        padded = callsign.upper().ljust(6)[:6]
+        addr = bytearray(ord(c) << 1 for c in padded)
+        ssid_byte = 0x60 | ((ssid & 0x0F) << 1) | (0x01 if is_last else 0x00)
+        addr.append(ssid_byte)
+        return bytes(addr)
+
+    def test_ssid_zero_renders_bare(self):
+        addr = self._encode_address("APRS", 0)
+        rendered, _, _ = self.decoder._get_callsign(addr)
+        self.assertEqual(rendered, "APRS")
+
+    def test_nonzero_ssid_renders_with_suffix(self):
+        addr = self._encode_address("KM6VOM", 9)
+        rendered, _, _ = self.decoder._get_callsign(addr)
+        self.assertEqual(rendered, "KM6VOM-9")
+
+    def test_igated_packet_has_bare_aprs_destination(self):
+        """End-to-end: a packet with APRS/SSID-0 destination (as nearly every
+        beacon has) must produce 'APRS', not 'APRS-0', in the TNC2 line
+        destined for APRS-IS. Guards the regression that was hiding our
+        gated-for-others packets from aprs.fi.
+        """
+        # Build an AX.25 frame: dest=APRS/0, source=KM6VOM/9, no path,
+        # Control=0x03, PID=0xF0, payload='!test'
+        dest = self._encode_address("APRS", 0, is_last=False)
+        source = self._encode_address("KM6VOM", 9, is_last=True)
+        frame = dest + source + b"\x03\xf0" + b"!test"
+        kiss_frame = b"\xc0\x00" + frame + b"\xc0"
+
+        result = self.decoder.decode_frame(kiss_frame)
+        self.assertIsNotNone(result)
+        self.assertEqual(result['destination'], "APRS")
+        self.assertEqual(result['source'], "KM6VOM-9")
+
+        line = self.decoder.to_tnc2(result, "N0GATE-10")
+        self.assertEqual(line, "KM6VOM-9>APRS,qAR,N0GATE-10:!test")
+        self.assertNotIn("APRS-0", line)
+
+
 class LoginVerifiedParseTests(unittest.TestCase):
     """The guard that refuses to run on an unverified login depends on this
     parse being correct. 'unverified' contains 'verified' as a substring, so

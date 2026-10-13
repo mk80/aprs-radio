@@ -80,7 +80,11 @@ class BinaryDecoder:
         was_digipeated = (ssid_byte & 0x80)     # H bit (has been repeated) si the MSB (bit 7)
 
         callsign_str = callsign.strip().decode('ascii', errors='ignore')
-        callsign_ssid_str = f"{callsign_str}-{ssid}"
+        # Standard APRS convention: SSID 0 renders as the bare callsign.
+        # Most destinations (APRS, APDW17, APDR16, ...) are software IDs on
+        # SSID 0 — emitting them as 'APRS-0' is non-standard, and strict
+        # consumers like aprs.fi can silently drop or mis-aggregate them.
+        callsign_ssid_str = f"{callsign_str}-{ssid}" if ssid else callsign_str
 
         return callsign_ssid_str, is_last_address, was_digipeated
 
