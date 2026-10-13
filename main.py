@@ -1,5 +1,5 @@
 import asyncio
-import serial_connection
+import kiss_tcp
 import time
 import binary_decode
 import binary_encode
@@ -72,34 +72,22 @@ def format_gps_to_aprs(lat_deg, lat_min, lon_deg, lon_lon_min):
 # --- shared resources ---
 FEND = b'\xc0'
 
-async def async_read_serial(tnc_interface):
-    """Non-blocking wrapper for reading serial bytes."""
-    # Since tnc_interface.read_available_bytes() is non-blocking (returns empty if none),
-    # we can run it directly. If it was blocking, we'd use loop.run_in_executor.
-    return tnc_interface.read_available_bytes()
-
-async def async_write_serial(tnc_interface, data):
-    """Non-blocking wrapper for writing serial bytes."""
-    tnc_interface.write_frame(data)
-
 async def async_rx_task(tnc_interface, protocol_decode, gateway_q, callsign):
     """
-    Async RX loop.
-    Optimized to use bytearray buffers and in-place modification.
+    Async RX loop. Reads from Dire Wolf's KISS TCP socket; asyncio's StreamReader
+    wakes this task the instant bytes arrive (epoll), so there is no polling floor.
     """
     print("--- RX Task Started ---")
     current_data = bytearray() # Mutable buffer
-    
+
     while not SHUTDOWN:
         try:
-            new_data = await async_read_serial(tnc_interface)
-            
-            if new_data:
-                current_data.extend(new_data)
-            else:
-                # Allow other tasks to run if no data
-                await asyncio.sleep(0.001)
-                continue
+            new_data = await tnc_interface.read(4096)
+            if not new_data:
+                # EOF — Dire Wolf closed the connection
+                print("RX Task: Dire Wolf closed the KISS connection.")
+                return
+            current_data.extend(new_data)
 
             # 2. KISS Frame Delimitation/Processing loop (Find [FEND ... FEND])
             while FEND in current_data:
@@ -184,7 +172,7 @@ async def async_tx_task(tnc_interface, config):
                 kiss_packet = protocol_encode.kiss_stuff(raw_ax25)
                 
                 # Transmit
-                await async_write_serial(tnc_interface, kiss_packet)
+                await tnc_interface.write_frame(kiss_packet)
                 print(f"TX: Complete ({len(kiss_packet)} bytes)")
                 
                 last_tx_time = current_time
@@ -204,15 +192,16 @@ async def main():
 
     # 2. Setup Resources
     gateway_q = asyncio.Queue()
-    
-    # Setup TNC (Sync setup is fine here before loop)
-    tnc_interface = serial_connection.SerialTTY(baud_rate=115200)
-    if not tnc_interface.ser or not tnc_interface.ser.is_open:
-        print("Failed to open serial port. Exiting.")
+
+    # Connect to Dire Wolf's KISS TCP interface (configured in direwolf.conf: KISSPORT 8001).
+    tnc_interface = kiss_tcp.KissTCP(host='127.0.0.1', port=8001)
+    try:
+        await tnc_interface.connect()
+    except Exception as e:
+        print(f"Failed to connect to Dire Wolf KISS TCP: {e}")
+        print("Is `direwolf -c direwolf.conf` running?")
         return
 
-    print(f"Initialised Serial Port: {tnc_interface.port}")
-    
     protocol_decode = binary_decode.BinaryDecoder()
     
     # Setup Async IGate
@@ -265,19 +254,18 @@ async def main():
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        tnc_interface.close()
+        await tnc_interface.close()
         print("Cleanup complete.")
 
 if __name__ == '__main__':
     try:
         try:
+            import uvloop
             uvloop.install()
             print("Using uvloop for high-performance event loop.")
         except ImportError:
             print("uvloop not found, using standard asyncio loop.")
-        except Exception as e:
-            print(f"Could not install uvloop: {e}. Using standard asyncio loop.")
-            
+
         asyncio.run(main())
     except KeyboardInterrupt:
         pass # Handled inside main
