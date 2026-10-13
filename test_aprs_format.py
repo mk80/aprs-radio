@@ -8,6 +8,7 @@ substrings, so regressions in delimiter placement are caught.
 
 import unittest
 
+import aprs_is
 import binary_decode
 
 
@@ -76,6 +77,29 @@ class ToTnc2Tests(unittest.TestCase):
         self.assertNotIn(",,", line)
         self.assertIn(",qAR,N0GATE-10:", line)
         self.assertTrue(line.split(":", 1)[0].endswith(",qAR,N0GATE-10"))
+
+
+class LoginVerifiedParseTests(unittest.TestCase):
+    """The guard that refuses to run on an unverified login depends on this
+    parse being correct. 'unverified' contains 'verified' as a substring, so
+    naive matching would silently flip the guard off — guard the guard here.
+    """
+
+    def test_verified(self):
+        line = "# logresp N0CALL-10 verified, server T2SJC"
+        self.assertIs(aprs_is.AsyncIGate._parse_verified(line), True)
+
+    def test_unverified(self):
+        line = "# logresp N0CALL-10 unverified, server T2SJC"
+        self.assertIs(aprs_is.AsyncIGate._parse_verified(line), False)
+
+    def test_unknown_line(self):
+        self.assertIsNone(aprs_is.AsyncIGate._parse_verified("# javAPRSSrvr 5.0.6"))
+        self.assertIsNone(aprs_is.AsyncIGate._parse_verified(""))
+
+    def test_case_insensitive(self):
+        self.assertIs(aprs_is.AsyncIGate._parse_verified("UNVERIFIED"), False)
+        self.assertIs(aprs_is.AsyncIGate._parse_verified("Verified"), True)
 
 
 if __name__ == '__main__':

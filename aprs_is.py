@@ -8,7 +8,7 @@ import asyncio
 import logging
 
 class AsyncIGate:
-    def __init__(self, callsign, passcode, gateway_q, host="rotate.aprs2.net", port=14580):
+    def __init__(self, callsign, passcode, gateway_q, host="noam.aprs2.net", port=14580):
         self.callsign = callsign
         self.passcode = passcode
         self.host = host
@@ -17,13 +17,21 @@ class AsyncIGate:
         self.reader = None
         self.writer = None
         self.connected = False
+        # None = unknown, True = passcode accepted, False = server marked us
+        # unverified (iGate uplink will be silently dropped).
+        self.verified = None
 
     async def connect(self):
+        # If an outer caller already brought us up (e.g. for the startup
+        # verification guard), don't open a second socket.
+        if self.connected:
+            return
+
         while True:
             try:
                 print(f"--- Connecting to APRS-IS ({self.host}:{self.port}) ---")
                 self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
-                
+
                 # TCP_NODELAY to disable Nagle's algorithm for lower latency
                 sock = self.writer.get_extra_info('socket')
                 if sock:
@@ -37,11 +45,14 @@ class AsyncIGate:
                 login_str = f"user {self.callsign} pass {self.passcode} vers AsyncAPRS 0.1\r\n"
                 self.writer.write(login_str.encode('ascii'))
                 await self.writer.drain()
-                
-                # Read login response
+
+                # Read login response. Server replies with a `# logresp ...` line
+                # that explicitly contains the word "verified" or "unverified".
                 response = await self.reader.read(1024)
-                print(f"APRS-IS Login Response: {response.decode('ascii', errors='ignore').strip()}")
-                
+                decoded = response.decode('ascii', errors='ignore').strip()
+                print(f"APRS-IS Login Response: {decoded}")
+                self.verified = self._parse_verified(decoded)
+
                 self.connected = True
                 return # Connected successfully
 
@@ -49,6 +60,20 @@ class AsyncIGate:
                 print(f"APRS-IS Connection Failed: {e}. Retrying in 5s...")
                 self.connected = False
                 await asyncio.sleep(5)
+
+    @staticmethod
+    def _parse_verified(login_response):
+        """Return True/False/None from the server's logresp line.
+
+        The server's wording is 'verified' or 'unverified' — the latter contains
+        the former as a substring, so order matters here.
+        """
+        lower = login_response.lower()
+        if 'unverified' in lower:
+            return False
+        if 'verified' in lower:
+            return True
+        return None
 
     async def send_loop(self):
         """

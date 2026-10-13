@@ -214,6 +214,30 @@ async def main():
 
     igate = aprs_is.AsyncIGate(call_ssid, passcode, gateway_q)
 
+    # Connect to APRS-IS up front so we can verify the passcode before launching
+    # any tasks. Unverified logins have their iGate uplink silently dropped by
+    # the server, so running on would gate nothing for hours without any error.
+    try:
+        await igate.connect()
+    except Exception as e:
+        print(f"APRS-IS connection failed: {e}")
+        await tnc_interface.close()
+        return
+
+    if igate.verified is False:
+        print("")
+        print("ERROR: APRS-IS login is UNVERIFIED — refusing to start.")
+        print(f"  Logged in as {call_ssid} with passcode '{passcode}'.")
+        print("  APRS-IS silently drops iGate uplink from unverified clients,")
+        print("  so you would receive packets off the air and get no gate credit.")
+        print("")
+        print("  Fix: generate your passcode (base callsign, no SSID) and save it to ./cs_token:")
+        print("    python3 -c \"import aprslib; print(aprslib.passcode('YOURCALL'))\" > ./cs_token")
+        print("  or use https://apps.magicbug.co.uk/passcode/")
+        print("")
+        await tnc_interface.close()
+        return
+
     # 3. Create Tasks
     tasks = []
     
