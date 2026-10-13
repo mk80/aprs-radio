@@ -110,18 +110,19 @@ async def async_rx_task(tnc_interface, protocol_decode, gateway_q, callsign):
                     # extract the frame (including both FENDs)
                     # Note: Slicing bytearray returns bytearray. binary_decode should handle it.
                     complete_frame = current_data[:second_fend + 1]
-                    
+                    # Timestamp as early as possible: the moment we have a
+                    # complete KISS frame in hand. Everything after this is
+                    # our own processing + network cost.
+                    t_rx = time.perf_counter_ns()
+
                     # 3. process the frame in the binary decoder
                     if len(complete_frame) > 2: # ignore empty frames like 0xc0 0xc0
                         try:
-                            # We clone complete_frame implicitly by slicing if we needed to, 
-                            # but here we pass it. If decode modifies it, we might care, but it doesn't.
-                            # It's safer to convert to bytes if unsure, but for speed we try to avoid it.
                             result = protocol_decode.decode_frame(complete_frame)
                             if result and callsign != result['source']:
                                 tnc2_str = protocol_decode.to_tnc2(result, callsign)
-                                await gateway_q.put(tnc2_str)
-                                # Async logging (simulated via print, but it doesn't block the loop logic much)
+                                t_formatted = time.perf_counter_ns()
+                                await gateway_q.put((tnc2_str, t_rx, t_formatted))
                                 print(f"RX: {result['source']} -> {result['destination']}")
                             elif callsign == result['source']:
                                 print(f"Packet Duplicate :: callsign :: {result['source']} :: {callsign}")
@@ -129,7 +130,7 @@ async def async_rx_task(tnc_interface, protocol_decode, gateway_q, callsign):
                                 pass # decode failed, ignore silently
                         except Exception:
                             pass # decode error, ignore
-                            
+
                     # remove the processed frame from the buffer
                     del current_data[:second_fend + 1]
                 else:

@@ -7,6 +7,12 @@ import socket
 import asyncio
 import logging
 
+# Rolling buffer of total-latency samples so the per-packet print can show a
+# running median — one competitor race per sample means a stable median is a
+# better signal of "where you sit" than any individual packet.
+_LATENCY_SAMPLES_MS = []
+_LATENCY_WINDOW = 20
+
 class AsyncIGate:
     def __init__(self, callsign, passcode, gateway_q, host="noam.aprs2.net", port=14580):
         self.callsign = callsign
@@ -85,18 +91,41 @@ class AsyncIGate:
 
         while True:
             try:
-                packet = await self.queue.get()
+                item = await self.queue.get()
+                # Queue items are (tnc2_str, t_rx_ns, t_formatted_ns) tuples
+                # since the timing-instrumentation change. Keep the plain-str
+                # path for backward-compat in case anything else enqueues.
+                if isinstance(item, tuple):
+                    packet, t_rx, t_formatted = item
+                else:
+                    packet, t_rx, t_formatted = item, None, None
+
                 if not self.connected:
                     await self.connect()
-                
+
                 if packet:
                     line = packet + "\r\n"
                     self.writer.write(line.encode('ascii'))
                     await self.writer.drain()
-                    print(f"iGated >> {packet}")
-                    
+                    if t_rx is not None:
+                        t_drained = time.perf_counter_ns()
+                        proc_ms = (t_formatted - t_rx) / 1e6
+                        net_ms = (t_drained - t_formatted) / 1e6
+                        total_ms = (t_drained - t_rx) / 1e6
+                        _LATENCY_SAMPLES_MS.append(total_ms)
+                        if len(_LATENCY_SAMPLES_MS) > _LATENCY_WINDOW:
+                            _LATENCY_SAMPLES_MS.pop(0)
+                        median = sorted(_LATENCY_SAMPLES_MS)[len(_LATENCY_SAMPLES_MS) // 2]
+                        print(
+                            f"iGated [{total_ms:.1f}ms proc={proc_ms:.2f} "
+                            f"net={net_ms:.2f}  median({len(_LATENCY_SAMPLES_MS)})={median:.1f}ms] "
+                            f">> {packet}"
+                        )
+                    else:
+                        print(f"iGated >> {packet}")
+
                 self.queue.task_done()
-                
+
             except Exception as e:
                 print(f"Error in send_loop: {e}")
                 self.connected = False
