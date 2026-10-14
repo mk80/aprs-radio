@@ -10,6 +10,9 @@ cs_token
 *.key
 *.pem
 
+# Per-operator config (contains lat/lon)
+config.json
+
 # Python Artifacts
 __pycache__/
 *.py[cod]

@@ -80,7 +80,11 @@ class BinaryDecoder:
         was_digipeated = (ssid_byte & 0x80)     # H bit (has been repeated) si the MSB (bit 7)
 
         callsign_str = callsign.strip().decode('ascii', errors='ignore')
-        callsign_ssid_str = f"{callsign_str}-{ssid}"
+        # Standard APRS convention: SSID 0 renders as the bare callsign.
+        # Most destinations (APRS, APDW17, APDR16, ...) are software IDs on
+        # SSID 0 — emitting them as 'APRS-0' is non-standard, and strict
+        # consumers like aprs.fi can silently drop or mis-aggregate them.
+        callsign_ssid_str = f"{callsign_str}-{ssid}" if ssid else callsign_str
 
         return callsign_ssid_str, is_last_address, was_digipeated
 
@@ -135,7 +139,7 @@ class BinaryDecoder:
     def to_tnc2(self, parsed_data, callsign_s):
         """
         Converts parsed dictionary back into TNC2 string for APRS-IS
-        
+
         :param self: self reference
         :param parsed_data: AX.25 dictionary of parsed frame
         """
@@ -144,11 +148,14 @@ class BinaryDecoder:
 
         src = parsed_data['source']
         dest = parsed_data['destination']
-        path = ",".join(parsed_data['path'])
-        igate_path = f"{path},{q_construct},{callsign_s}"
         payload = parsed_data['payload']
 
-        return f"{src}>{dest},{igate_path}:{payload}"
+        # Build the hop list after the destination. For a packet heard direct
+        # (empty digi path), skip the path segment entirely — otherwise the
+        # resulting ",,qAR,..." is malformed TNC2 and APRS-IS drops the line,
+        # so the gate never gets credit for direct packets.
+        hops = list(parsed_data['path']) + [q_construct, callsign_s]
+        return f"{src}>{dest},{','.join(hops)}:{payload}"
     
     # CRC check is being done by TNC
     # leaving this here though in case for future use

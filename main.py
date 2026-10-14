@@ -1,15 +1,22 @@
 import asyncio
-import serial_connection
+import json
+import os
+import kiss_tcp
 import time
 import binary_decode
 import binary_encode
 import aprs_is
 import signal
 
-# ... (imports remain) ...
-
 # Global flag for shutdown
 SHUTDOWN = False
+
+CONFIG_PATH = './config.json'
+DEFAULT_APRS_IS_SERVER = 'noam.aprs2.net'
+# Legacy generic destination — picked as the default because this project is
+# generic; operators register their own APZxxx experimental code (or a
+# registered device ID) via the startup prompt or by editing config.json.
+DEFAULT_DEVICE_CODE = 'APRS'
 
 def user_config():
     config = {}
@@ -17,12 +24,15 @@ def user_config():
 
     # Ask for Callsign first because it is required for IGate login regardless of RX/TX mode
     config['callsign'] = input("Enter Callsign: ").strip().upper()
-    
+
     ssid_input = input("Enter SSID (0-15, leave blank for 0): ").strip()
     config['ssid'] = int(ssid_input) if ssid_input else 0
 
     mode = input("Select Mode ([R]X only or [B]oth RX/TX): ").strip().lower()
     config['mode'] = 'both' if mode == 'b' else 'rx'
+
+    server = input(f"APRS-IS server [{DEFAULT_APRS_IS_SERVER}]: ").strip()
+    config['aprs_is_server'] = server or DEFAULT_APRS_IS_SERVER
 
     if config['mode'] == 'both':
         print("\n--- Position Information ---")
@@ -35,7 +45,7 @@ def user_config():
         lon_m = float(input("  Minutes: "))
 
         config['lat'], config['lon'] = format_gps_to_aprs(lat_d, lat_m, lon_d, lon_m)
-        
+
         # --- ICON SELECTION ---
         print("\nCommon Icons: [H]ome, [B]ike, [C]ar, [J]eep, [S]hip, [P]erson, [G]ateway")
         icon_choice = input("Select Icon: ").strip().lower()
@@ -46,12 +56,41 @@ def user_config():
         }
         # default to home if choice is invalid
         config['table'], config['symbol'] = icons.get(icon_choice, ('/', '-'))
-        
+
         config['message'] = input("Enter Beacon Message: ").strip()
-        
+
         interval = input("Beacon interval in minutes (e.g., 10): ").strip()
         config['interval'] = int(interval) * 60 if interval else 600
-    
+
+        device_code = input(f"Device code [{DEFAULT_DEVICE_CODE}]: ").strip().upper()
+        config['device_code'] = device_code or DEFAULT_DEVICE_CODE
+
+    return config
+
+
+def load_or_create_config():
+    """Load ./config.json if present; otherwise run the wizard and persist.
+
+    Reconfigure by deleting the file. Secrets (cs_token) live elsewhere and
+    aren't touched here; config.json is .gitignored because it still carries
+    lat/lon which is modestly sensitive.
+    """
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH) as f:
+            config = json.load(f)
+        # One-line summary so you can see what you're about to run with.
+        call_ssid = f"{config.get('callsign')}-{config.get('ssid')}"
+        summary = f"{call_ssid}, {config.get('mode')}, APRS_IS={config.get('aprs_is_server')}"
+        if config.get('mode') == 'both':
+            summary += f", device={config.get('device_code')}"
+        print(f"Loaded {CONFIG_PATH}: {summary}")
+        print(f"(delete {CONFIG_PATH} to re-run the wizard)")
+        return config
+
+    config = user_config()
+    with open(CONFIG_PATH, 'w') as f:
+        json.dump(config, f, indent=2)
+    print(f"Saved config to {CONFIG_PATH}.")
     return config
 
 def format_gps_to_aprs(lat_deg, lat_min, lon_deg, lon_lon_min):
@@ -72,34 +111,22 @@ def format_gps_to_aprs(lat_deg, lat_min, lon_deg, lon_lon_min):
 # --- shared resources ---
 FEND = b'\xc0'
 
-async def async_read_serial(tnc_interface):
-    """Non-blocking wrapper for reading serial bytes."""
-    # Since tnc_interface.read_available_bytes() is non-blocking (returns empty if none),
-    # we can run it directly. If it was blocking, we'd use loop.run_in_executor.
-    return tnc_interface.read_available_bytes()
-
-async def async_write_serial(tnc_interface, data):
-    """Non-blocking wrapper for writing serial bytes."""
-    tnc_interface.write_frame(data)
-
 async def async_rx_task(tnc_interface, protocol_decode, gateway_q, callsign):
     """
-    Async RX loop.
-    Optimized to use bytearray buffers and in-place modification.
+    Async RX loop. Reads from Dire Wolf's KISS TCP socket; asyncio's StreamReader
+    wakes this task the instant bytes arrive (epoll), so there is no polling floor.
     """
     print("--- RX Task Started ---")
     current_data = bytearray() # Mutable buffer
-    
+
     while not SHUTDOWN:
         try:
-            new_data = await async_read_serial(tnc_interface)
-            
-            if new_data:
-                current_data.extend(new_data)
-            else:
-                # Allow other tasks to run if no data
-                await asyncio.sleep(0.001)
-                continue
+            new_data = await tnc_interface.read(4096)
+            if not new_data:
+                # EOF — Dire Wolf closed the connection
+                print("RX Task: Dire Wolf closed the KISS connection.")
+                return
+            current_data.extend(new_data)
 
             # 2. KISS Frame Delimitation/Processing loop (Find [FEND ... FEND])
             while FEND in current_data:
@@ -122,26 +149,35 @@ async def async_rx_task(tnc_interface, protocol_decode, gateway_q, callsign):
                     # extract the frame (including both FENDs)
                     # Note: Slicing bytearray returns bytearray. binary_decode should handle it.
                     complete_frame = current_data[:second_fend + 1]
-                    
+                    # Timestamp as early as possible: the moment we have a
+                    # complete KISS frame in hand. Everything after this is
+                    # our own processing + network cost.
+                    t_rx = time.perf_counter_ns()
+
                     # 3. process the frame in the binary decoder
                     if len(complete_frame) > 2: # ignore empty frames like 0xc0 0xc0
                         try:
-                            # We clone complete_frame implicitly by slicing if we needed to, 
-                            # but here we pass it. If decode modifies it, we might care, but it doesn't.
-                            # It's safer to convert to bytes if unsure, but for speed we try to avoid it.
                             result = protocol_decode.decode_frame(complete_frame)
                             if result and callsign != result['source']:
-                                tnc2_str = protocol_decode.to_tnc2(result, callsign)
-                                await gateway_q.put(tnc2_str)
-                                # Async logging (simulated via print, but it doesn't block the loop logic much)
-                                print(f"RX: {result['source']} -> {result['destination']}")
+                                if result.get('payload', '').startswith('}'):
+                                    # 3rd-party packet. The APRS spec forbids
+                                    # iGates from uplinking these to APRS-IS;
+                                    # aprsc silently drops them with
+                                    # rx_errs[10] = party_3rd_ip. Skipping here
+                                    # saves a wasted round trip to the server.
+                                    print(f"RX: {result['source']} -> {result['destination']} (3rd-party, not iGating)")
+                                else:
+                                    tnc2_str = protocol_decode.to_tnc2(result, callsign)
+                                    t_formatted = time.perf_counter_ns()
+                                    await gateway_q.put((tnc2_str, t_rx, t_formatted))
+                                    print(f"RX: {result['source']} -> {result['destination']}")
                             elif callsign == result['source']:
                                 print(f"Packet Duplicate :: callsign :: {result['source']} :: {callsign}")
                             else:
                                 pass # decode failed, ignore silently
                         except Exception:
                             pass # decode error, ignore
-                            
+
                     # remove the processed frame from the buffer
                     del current_data[:second_fend + 1]
                 else:
@@ -177,14 +213,15 @@ async def async_tx_task(tnc_interface, config):
                 print("TX: Sending Beacon...")
                 # Build and wrap the packet
                 raw_ax25 = protocol_encode.construct_ax25_frame(
-                    config['callsign'], 
-                    config['ssid'], 
+                    config['callsign'],
+                    config['ssid'],
+                    dest=config.get('device_code', DEFAULT_DEVICE_CODE),
                     payload=payload_str
                 )
                 kiss_packet = protocol_encode.kiss_stuff(raw_ax25)
                 
                 # Transmit
-                await async_write_serial(tnc_interface, kiss_packet)
+                await tnc_interface.write_frame(kiss_packet)
                 print(f"TX: Complete ({len(kiss_packet)} bytes)")
                 
                 last_tx_time = current_time
@@ -198,21 +235,23 @@ async def async_tx_task(tnc_interface, config):
 async def main():
     global SHUTDOWN
     
-    # 1. Configuration (Sync)
-    config = user_config()
+    # 1. Configuration (Sync) — loaded from ./config.json or built via wizard
+    #    on first run; see load_or_create_config().
+    config = load_or_create_config()
     call_ssid = f"{config['callsign']}-{config['ssid']}"
 
     # 2. Setup Resources
     gateway_q = asyncio.Queue()
-    
-    # Setup TNC (Sync setup is fine here before loop)
-    tnc_interface = serial_connection.SerialTTY(baud_rate=115200)
-    if not tnc_interface.ser or not tnc_interface.ser.is_open:
-        print("Failed to open serial port. Exiting.")
+
+    # Connect to Dire Wolf's KISS TCP interface (configured in direwolf.conf: KISSPORT 8001).
+    tnc_interface = kiss_tcp.KissTCP(host='127.0.0.1', port=8001)
+    try:
+        await tnc_interface.connect()
+    except Exception as e:
+        print(f"Failed to connect to Dire Wolf KISS TCP: {e}")
+        print("Is `direwolf -c direwolf.conf` running?")
         return
 
-    print(f"Initialised Serial Port: {tnc_interface.port}")
-    
     protocol_decode = binary_decode.BinaryDecoder()
     
     # Setup Async IGate
@@ -223,7 +262,42 @@ async def main():
     except Exception:
         print("Warning: Could not read cs_token")
 
-    igate = aprs_is.AsyncIGate(call_ssid, passcode, gateway_q)
+    # APRS-IS host precedence: APRS_IS_SERVER env var > config.json > default.
+    # The env var lets you one-off override (e.g. probe a different T2 server)
+    # without editing config. For dedupe-race work the lowest-RTT endpoint
+    # matters a lot — the regional pool round-robins across servers with wide
+    # RTT variance (T2BC 44.135.208.225, T2LANE 44.26.110.252, T2SJC
+    # 44.10.10.10 all measured well from SoCal).
+    aprs_host = (
+        os.environ.get('APRS_IS_SERVER')
+        or config.get('aprs_is_server')
+        or DEFAULT_APRS_IS_SERVER
+    )
+    igate = aprs_is.AsyncIGate(call_ssid, passcode, gateway_q, host=aprs_host)
+
+    # Connect to APRS-IS up front so we can verify the passcode before launching
+    # any tasks. Unverified logins have their iGate uplink silently dropped by
+    # the server, so running on would gate nothing for hours without any error.
+    try:
+        await igate.connect()
+    except Exception as e:
+        print(f"APRS-IS connection failed: {e}")
+        await tnc_interface.close()
+        return
+
+    if igate.verified is False:
+        print("")
+        print("ERROR: APRS-IS login is UNVERIFIED — refusing to start.")
+        print(f"  Logged in as {call_ssid} with passcode '{passcode}'.")
+        print("  APRS-IS silently drops iGate uplink from unverified clients,")
+        print("  so you would receive packets off the air and get no gate credit.")
+        print("")
+        print("  Fix: generate your passcode (base callsign, no SSID) and save it to ./cs_token:")
+        print("    python3 -c \"import aprslib; print(aprslib.passcode('YOURCALL'))\" > ./cs_token")
+        print("  or use https://apps.magicbug.co.uk/passcode/")
+        print("")
+        await tnc_interface.close()
+        return
 
     # 3. Create Tasks
     tasks = []
@@ -265,19 +339,18 @@ async def main():
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        tnc_interface.close()
+        await tnc_interface.close()
         print("Cleanup complete.")
 
 if __name__ == '__main__':
     try:
         try:
+            import uvloop
             uvloop.install()
             print("Using uvloop for high-performance event loop.")
         except ImportError:
             print("uvloop not found, using standard asyncio loop.")
-        except Exception as e:
-            print(f"Could not install uvloop: {e}. Using standard asyncio loop.")
-            
+
         asyncio.run(main())
     except KeyboardInterrupt:
         pass # Handled inside main
